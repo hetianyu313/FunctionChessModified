@@ -216,6 +216,17 @@ class UIController {
         this.aiConfigMenuLockValue = null;
         this.aiConfigMenuCollapsed = false;
         this.initAiConfigFloatingMenu();
+        // 本地对战设置悬浮菜单
+        this.localConfigMenu = null;
+        this.localConfigClearOnFail = true; // 默认每次失败后清空函数显示区
+        this.initLocalConfigFloatingMenu();
+
+        // 闯关模式设置悬浮菜单
+        this.campaignConfigMenu = null;
+        this.campaignConfigCopyBtn = null;
+        this.campaignConfigSkipBtn = null;
+        this.campaignConfigClearOnFail = false; // 默认同一关内尝试失败时保留函数
+        this.initCampaignConfigFloatingMenu();
 
         // AI 存档管理面板
         this.aiModeHint = document.getElementById('ai-mode-hint');
@@ -764,6 +775,9 @@ class UIController {
                     <span>允许把 + - * / 作为禁用元素</span>
                     <input id="ai-config-allow-arithmetic-input" type="checkbox">
                 </label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="ai-config-copy-btn" type="button" style="border:none; border-radius:999px; padding:6px 10px; background:rgba(141,217,255,0.18); color:#8dd9ff; cursor:pointer; font-size:12px;">复制当前关卡数据</button>
+                </div>
             </div>
         `;
 
@@ -778,6 +792,7 @@ class UIController {
         this.aiConfigMenuForbiddenValue = document.getElementById('ai-config-forbidden-value');
         this.aiConfigMenuTargetValue = document.getElementById('ai-config-target-value');
         this.aiConfigMenuLockValue = document.getElementById('ai-config-lock-value');
+        this.aiConfigCopyBtn = document.getElementById('ai-config-copy-btn');
 
         [this.aiConfigMenuForbiddenInput, this.aiConfigMenuTargetInput, this.aiConfigMenuLockInput].forEach(input => {
             if (!input) return;
@@ -790,6 +805,10 @@ class UIController {
 
         if (this.aiConfigMenuToggleBtn) {
             this.aiConfigMenuToggleBtn.addEventListener('click', () => this.toggleAiConfigFloatingMenu());
+        }
+
+        if (this.aiConfigCopyBtn) {
+            this.aiConfigCopyBtn.addEventListener('click', () => this.handleCopyBattleConfig('ai'));
         }
 
         this.syncAiConfigFloatingMenu();
@@ -829,9 +848,230 @@ class UIController {
         this.aiConfigMenuToggleBtn.textContent = this.aiConfigMenuCollapsed ? '展开' : '收起';
     }
 
+    /**
+     * 初始化本地对战浮动菜单（仅本地模式显示）
+     */
+    initLocalConfigFloatingMenu() {
+        if (this.localConfigMenu) return;
+
+        const panel = document.createElement('div');
+        panel.id = 'local-config-floating-menu';
+        panel.style.cssText = [
+            'position: fixed',
+            'right: 18px',
+            'bottom: 18px',
+            'z-index: 2000',
+            'width: min(320px, calc(100vw - 24px))',
+            'padding: 12px 12px 10px',
+            'border-radius: 12px',
+            'background: rgba(10, 18, 32, 0.9)',
+            'backdrop-filter: blur(8px)',
+            'box-shadow: 0 12px 40px rgba(0,0,0,0.3)',
+            'color: #f3f4f6',
+            'font-size: 13px',
+            'display: none'
+        ].join('; ');
+
+        panel.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
+                <div style="font-weight:700; color:#ffd7a8;">本地对战设置</div>
+            </div>
+            <div id="local-config-menu-body" style="display:flex; flex-direction:column; gap:8px;">
+                <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <span>失败后清空函数显示区</span>
+                    <input id="local-config-clear-toggle" type="checkbox" checked>
+                </label>
+                <div style="display:flex; gap:8px;">
+                    <button id="local-config-copy-btn" type="button" class="btn">复制当前关卡数据</button>
+                    <span id="local-config-copy-hint" style="opacity:0.9; font-size:12px; align-self:center;">格式：STATE/TARGET/坐标/DENY</span>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(panel);
+        this.localConfigMenu = panel;
+        this.localConfigMenuBody = document.getElementById('local-config-menu-body');
+        this.localConfigClearToggle = document.getElementById('local-config-clear-toggle');
+        this.localConfigCopyBtn = document.getElementById('local-config-copy-btn');
+        this.localConfigCopyHint = document.getElementById('local-config-copy-hint');
+
+        if (this.localConfigClearToggle) {
+            this.localConfigClearToggle.addEventListener('change', () => {
+                this.localConfigClearOnFail = !!this.localConfigClearToggle.checked;
+            });
+        }
+
+        if (this.localConfigCopyBtn) {
+            this.localConfigCopyBtn.addEventListener('click', () => this.handleCopyLocalConfig());
+        }
+
+        this.applyLocalConfigFloatingMenuCollapsedState?.();
+    }
+
+    updateLocalConfigFloatingMenuVisibility() {
+        if (!this.localConfigMenu) return;
+        const shouldShow = (this.gameController?.gameMode === 'local' || this.selectedMode === 'local') && this._gameActive;
+        this.localConfigMenu.style.display = shouldShow ? 'block' : 'none';
+    }
+
+    initCampaignConfigFloatingMenu() {
+        if (this.campaignConfigMenu) return;
+
+        const panel = document.createElement('div');
+        panel.id = 'campaign-config-floating-menu';
+        panel.style.cssText = [
+            'position: fixed',
+            'right: 18px',
+            'bottom: 18px',
+            'z-index: 2000',
+            'width: min(320px, calc(100vw - 24px))',
+            'padding: 12px 12px 10px',
+            'border-radius: 12px',
+            'background: rgba(10, 18, 32, 0.9)',
+            'backdrop-filter: blur(8px)',
+            'box-shadow: 0 12px 40px rgba(0,0,0,0.3)',
+            'color: #f3f4f6',
+            'font-size: 13px',
+            'display: none',
+            'pointer-events: auto'
+        ].join('; ');
+
+        panel.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
+                <div style="font-weight:700; color:#ffd7a8;">闯关模式设置</div>
+            </div>
+            <div id="campaign-config-menu-body" style="display:flex; flex-direction:column; gap:8px;">
+                <label style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <span>同一关内尝试失败后保留函数</span>
+                    <input id="campaign-config-clear-toggle" type="checkbox" checked>
+                </label>
+                <div style="display:flex; gap:8px;">
+                    <button id="campaign-config-copy-btn" type="button" class="btn">复制当前关卡数据</button>
+                    <button id="campaign-config-skip-btn" type="button" class="btn btn-success">一键通过</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(panel);
+        this.campaignConfigMenu = panel;
+        this.campaignConfigCopyBtn = document.getElementById('campaign-config-copy-btn');
+        this.campaignConfigSkipBtn = document.getElementById('campaign-config-skip-btn');
+        this.campaignConfigClearToggle = document.getElementById('campaign-config-clear-toggle');
+
+        if (this.campaignConfigClearToggle) {
+            this.campaignConfigClearToggle.addEventListener('change', () => {
+                this.campaignConfigClearOnFail = !this.campaignConfigClearToggle.checked;
+            });
+        }
+
+        panel.addEventListener('click', (event) => {
+            const button = event.target.closest('button');
+            if (!button) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (button.id === 'campaign-config-copy-btn') {
+                this.handleCopyBattleConfig('campaign');
+            } else if (button.id === 'campaign-config-skip-btn') {
+                this.handleSkipCampaignLevel();
+            }
+        });
+
+        if (this.campaignConfigCopyBtn) {
+            this.campaignConfigCopyBtn.style.pointerEvents = 'auto';
+        }
+        if (this.campaignConfigSkipBtn) {
+            this.campaignConfigSkipBtn.style.pointerEvents = 'auto';
+        }
+    }
+
+    updateCampaignConfigFloatingMenuVisibility() {
+        if (!this.campaignConfigMenu) return;
+        const shouldShow = (this.gameController?.gameMode === 'campaign' || this.selectedMode === 'campaign') && this._gameActive;
+        this.campaignConfigMenu.style.display = shouldShow ? 'block' : 'none';
+    }
+
+    getCurrentBattleConfigText(mode = this.gameController?.gameMode || this.selectedMode) {
+        const state = this.gameController?.getGameState?.() || {};
+        const level = this.gameController?.currentRound || Number(this.roundElement?.textContent) || 0;
+        const targets = (state.roundState && state.roundState.targetCells) || [];
+        const denies = (state.roundState && state.roundState.forbiddenCells) || [];
+
+        const lines = [];
+        lines.push(`STATE ${level}`);
+        lines.push(`TARGET ${targets.length}`);
+        for (const c of targets) {
+            lines.push(`${c.x} ${c.y}`);
+        }
+        lines.push(`DENY ${denies.length}`);
+        for (const c of denies) {
+            lines.push(`${c.x} ${c.y}`);
+        }
+        return lines.join('\n');
+    }
+
+    handleCopyBattleConfig(mode = this.gameController?.gameMode || this.selectedMode) {
+        try {
+            const text = this.getCurrentBattleConfigText(mode);
+            navigator.clipboard.writeText(text).then(() => {
+                const label = mode === 'ai' ? '人机对战' : mode === 'campaign' ? '闯关模式' : '本地对战';
+                this.showMessage(`已复制${label}关卡数据到剪贴板`);
+            }).catch(() => {
+                this.showMessage('复制到剪贴板失败，请手动复制', 'error');
+            });
+        } catch (e) {
+            console.error('复制对战数据失败:', e);
+            this.showMessage('复制失败：' + (e.message || e), 'error');
+        }
+    }
+
+    handleSkipCampaignLevel() {
+        if (this.gameController?.gameMode !== 'campaign' || !this.gameController?.campaignState?.active) {
+            this.showMessage('当前不在闯关模式', 'error');
+            return;
+        }
+
+        const levelId = Number(this.campaignCurrentLevelId || this.gameController.currentRound || 1);
+        const currentLength = this.getCurrentExpressionLength();
+        const previousBest = this.getCampaignLevelBestRecord(levelId);
+        const isNewRecord = previousBest === null || !Number.isFinite(previousBest) || currentLength < previousBest;
+
+        if (isNewRecord) {
+            this.setCampaignLevelBestRecord(levelId, currentLength);
+        }
+
+        const gainedStars = 1;
+        const previousStars = this.getCampaignLevelBestStars(levelId);
+        if (gainedStars > previousStars) {
+            const currentStars = this.getCampaignCollectedStars();
+            this.setCampaignCollectedStars(currentStars + (gainedStars - previousStars));
+            this.setCampaignLevelBestStars(levelId, gainedStars);
+        }
+
+        const clearedMax = Math.max(this.getCampaignClearedMax(), levelId);
+        this.gameController.setCampaignProgress(clearedMax);
+        this.refreshCampaignStartUI();
+
+        this.showCampaignVictory({
+            levelId,
+            pass: true,
+            score: 1,
+            expression: this.currentExpression || '',
+            expressionLength: currentLength,
+            isNewRecord,
+            previousBest,
+            totalLevels: this.gameController.campaignState.totalLevels,
+            difficulty: this.gameController.difficulty
+        });
+        this.showMessage(`已一键通过第 ${levelId} 关`, 'success');
+    }
+
+    handleCopyLocalConfig() {
+        this.handleCopyBattleConfig('local');
+    }
+
     updateAiConfigFloatingMenuVisibility() {
         if (!this.aiConfigMenu) return;
-        const shouldShow = this.gameController?.gameMode === 'ai' && this._gameActive;
+        const shouldShow = (this.gameController?.gameMode === 'ai' || this.selectedMode === 'ai') && this._gameActive;
         this.aiConfigMenu.style.display = shouldShow ? 'block' : 'none';
         if (shouldShow) {
             this.applyAiConfigFloatingMenuCollapsedState();
@@ -876,6 +1116,8 @@ class UIController {
         this.refreshStartSelectorDisplay();
         this.updateCampaignDrawDelayToggleVisibility();
         this.updateAiConfigFloatingMenuVisibility();
+        this.updateLocalConfigFloatingMenuVisibility();
+        this.updateCampaignConfigFloatingMenuVisibility();
 
         if (mode === 'local') {
             this.modeLocalBtn.classList.add('active');
@@ -1069,6 +1311,8 @@ class UIController {
         const modal = document.getElementById('p2p-room-modal');
         if (modal) modal.style.display = 'none';
         this.showModal(document.getElementById('start-modal'));
+        this.updateAiConfigFloatingMenuVisibility();
+        this.updateLocalConfigFloatingMenuVisibility();
     }
 
     /**
@@ -1443,6 +1687,8 @@ class UIController {
         this.gameController.initGame(rounds, difficulty, this.selectedMode);
         this.hideStartModal();
         this.updateAiConfigFloatingMenuVisibility();
+        this.updateLocalConfigFloatingMenuVisibility();
+        this.updateCampaignConfigFloatingMenuVisibility();
         this.showMessage(`开始${this.getModeName(this.selectedMode)}模式`);
     }
 
@@ -1518,6 +1764,8 @@ class UIController {
             }
             
             this.updateAiConfigFloatingMenuVisibility();
+            this.updateLocalConfigFloatingMenuVisibility();
+            this.updateCampaignConfigFloatingMenuVisibility();
 
             // Summa: hook game start
             if (this.gameController.gameMode === 'ai' && window.summaCharacter) {
@@ -1697,6 +1945,16 @@ class UIController {
                 });
             }
 
+            // 本地对战：根据设置决定失败时是否清空表达式（默认清空）
+            try {
+                if (this.gameController.gameMode === 'local') {
+                    const failed = !data.hitTarget || data.hitForbidden;
+                    if (failed && this.localConfigClearOnFail) {
+                        this.clearExpression();
+                    }
+                }
+            } catch (e) { /* ignore */ }
+
             // ── 挑衅反转学习钉子 ────────────────────────────────────────────────
             // 当 AI 模式下玩家 A 正在解答 Summa 的挑衅题目，需要让 Summa 学习或反馈
             if (this.gameController.gameMode === 'ai'
@@ -1730,6 +1988,10 @@ class UIController {
         this.gameController.on('campaignLevelResult', (data) => {
             this.refreshCampaignStartUI();
             const levelId = Number(data.levelId || this.campaignCurrentLevelId || 1);
+            const failed = !data.pass;
+            if (failed && this.campaignConfigClearOnFail) {
+                this.clearExpression();
+            }
             let isNewRecord = false;
             let previousBest = this.getCampaignLevelBestRecord(levelId);
             if (data.pass) {
@@ -1766,7 +2028,9 @@ class UIController {
                     if (data.pass) {
                         this.showCampaignVictory(data);
                     } else {
-                        this.clearExpression();
+                        if (this.campaignConfigClearOnFail) {
+                            this.clearExpression();
+                        }
                         this.gameController.setPhase(this.gameController.phases.INPUT_FUNCTION);
                     }
                 } catch (e) {
@@ -3773,6 +4037,13 @@ class UIController {
         // 3. 如果 AI 正在思考，标记为已取消（aiController 检查此标志）
         this._gameActive = false;
 
+        // 更新浮动菜单可见性（例如返回开始界面时）
+        try {
+            this.updateAiConfigFloatingMenuVisibility();
+            this.updateLocalConfigFloatingMenuVisibility();
+            this.updateCampaignConfigFloatingMenuVisibility();
+        } catch (e) { /* ignore */ }
+
         // 4. 清除消息提示
         this.showMessage('');
     }
@@ -3861,6 +4132,8 @@ class UIController {
             this.resetBattleGrid();
             this.hideModal(this.gameOverModal);
             this.showModal(this.startModal);
+            this.updateAiConfigFloatingMenuVisibility();
+            this.updateLocalConfigFloatingMenuVisibility();
         }
     }
     
@@ -3937,6 +4210,8 @@ class UIController {
         this.showModal(this.startModal);
         this.showMessage('');
         this.refreshStartSelectorDisplay();
+        this.updateAiConfigFloatingMenuVisibility();
+        this.updateLocalConfigFloatingMenuVisibility();
     }
     
     bindStartKeyboardSupport() {
@@ -4187,6 +4462,7 @@ class UIController {
         this.campaignCurrentLevelBestRecord = this.getCampaignLevelBestRecord(safeStart);
         this._markGameActive();
         this.gameController.initCampaign(pack, safeStart);
+        this.updateCampaignConfigFloatingMenuVisibility();
         if (this.gridSystem && this.gridSystem.setCampaignFixedRange) {
             this.gridSystem.setCampaignFixedRange(true);
         }
@@ -4319,6 +4595,7 @@ class UIController {
         if (this.campaignModal) this.showModal(this.campaignModal);
         this.showCampaignDifficulty();
         this.updateCampaignDrawDelayToggleVisibility();
+        this.updateCampaignConfigFloatingMenuVisibility();
         this.restoreBattleUI();
         const badge = document.getElementById('campaign-level-badge');
         if (badge) badge.style.display = 'none';
